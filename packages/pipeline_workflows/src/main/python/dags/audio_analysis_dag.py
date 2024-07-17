@@ -3,38 +3,33 @@ import json
 import math
 
 from airflow import DAG
-from airflow.contrib.kubernetes import secret
-from airflow.contrib.operators import kubernetes_pod_operator
 from airflow.models import Variable
 from airflow.operators.python_operator import PythonOperator
-from airflow.operators import TriggerDagRunOperator
+from airflow.operators.dagrun_operator import TriggerDagRunOperator
+from azure.storage.blob import BlobServiceClient  # Adjusted import for Azure
+from azure.kubernetes import KubernetesPodOperator  # Adjusted for Azure
+
 from helper_dag import generate_splitted_batches_for_audio_analysis
 
 audio_analysis_config = json.loads(Variable.get("audio_analysis_config"))
 source_path = Variable.get("sourcepathforaudioanalysis")
 destination_path = Variable.get("destinationpathforaudioanalysis")
-bucket_name = Variable.get("bucket")
+storage_account_name = Variable.get("storage_account_name")
 env_name = Variable.get("env")
-composer_namespace = Variable.get("composer_namespace")
-project = Variable.get("project")
+kube_namespace = Variable.get("kube_namespace")
+# Azure equivalent of GCP project is typically not used in the same way
 
 resource_limits = json.loads(Variable.get("audio_analysis_resource_limits"))
 
 YESTERDAY = datetime.datetime.now() - datetime.timedelta(days=1)
 LANGUAGE_CONSTANT = "{language}"
 
-secret_file = secret.Secret(
-    deploy_type="volume",
-    deploy_target="/tmp/secrets/google",
-    secret="gc-storage-rw-key",
-    key="key.json",
-)
-
+# Azure equivalent secret handling would go here, depending on your setup
+# You may use Azure Key Vault or similar
 
 def interpolate_language_paths(path, language):
     path_set = path.replace(LANGUAGE_CONSTANT, language)
     return path_set
-
 
 def create_dag(dag_id, dag_number, default_args, args, max_records_threshold_per_pod):
     dag = DAG(
@@ -59,6 +54,7 @@ def create_dag(dag_id, dag_number, default_args, args, max_records_threshold_per
             task_id="trigger_dependent_dag_" + next_dag_id,
             trigger_dag_id=next_dag_id,
         )
+        
         generate_batch_files = PythonOperator(
             task_id=dag_id + "_generate_batches",
             python_callable=generate_splitted_batches_for_audio_analysis,
@@ -68,21 +64,21 @@ def create_dag(dag_id, dag_number, default_args, args, max_records_threshold_per
                 "destination_path": destination_path_set,
                 "max_records_threshold_per_pod": max_records_threshold_per_pod,
                 "audio_format": audio_format,
-                "bucket_name": bucket_name,
+                "storage_account_name": storage_account_name,  # Use Azure storage account
             },
             dag_number=dag_number,
         )
 
         generate_batch_files
 
-        data_audio_analysis_task = kubernetes_pod_operator.KubernetesPodOperator(
+        data_audio_analysis_task = KubernetesPodOperator(
             task_id=f"data-audio-analysis-{source}",
             name="data-audio-analysis",
             cmds=[
                 "python",
                 "invocation_script.py",
                 "-b",
-                bucket_name,
+                storage_account_name,  # Adjust for Azure
                 "-a",
                 "audio_analysis",
                 "-rc",
@@ -92,10 +88,10 @@ def create_dag(dag_id, dag_number, default_args, args, max_records_threshold_per
                 "-l",
                 language,
             ],
-            namespace=composer_namespace,
+            namespace=kube_namespace,
             startup_timeout_seconds=300,
-            secrets=[secret_file],
-            image=f"us.gcr.io/{project}/ekstep_data_pipelines:{env_name}_1.0.0",
+            # Add Azure-specific secrets handling here if needed
+            image=f"myregistry.azurecr.io/ekstep_data_pipelines:{env_name}_1.0.0",  # Use Azure Container Registry
             image_pull_policy="Always",
             resources=resource_limits,
         )
@@ -110,14 +106,14 @@ def create_dag(dag_id, dag_number, default_args, args, max_records_threshold_per
                     if len(list_of_batch_files) > 0:
                         batch_file = list_of_batch_files.pop()
                         task_dict[
-                            f"create_embedding_task_{pod}_{phase}"] = kubernetes_pod_operator.KubernetesPodOperator(
+                            f"create_embedding_task_{pod}_{phase}"] = KubernetesPodOperator(
                             task_id=source + "_create_embedding_" + str(pod) + '_' + str(phase),
                             name="create-embedding",
                             cmds=[
                                 "python",
                                 "invocation_script.py",
                                 "-b",
-                                bucket_name,
+                                storage_account_name,  # Adjust for Azure
                                 "-a",
                                 "audio_embedding",
                                 "-rc",
@@ -129,29 +125,23 @@ def create_dag(dag_id, dag_number, default_args, args, max_records_threshold_per
                                 "-l",
                                 language,
                             ],
-                            namespace=composer_namespace,
+                            namespace=kube_namespace,
                             startup_timeout_seconds=300,
-                            secrets=[secret_file],
-                            image=f"us.gcr.io/{project}/ekstep_data_pipelines:{env_name}_1.0.0",
+                            # Add Azure-specific secrets handling here if needed
+                            image=f"myregistry.azurecr.io/ekstep_data_pipelines:{env_name}_1.0.0",  # Use Azure Container Registry
                             image_pull_policy="Always",
                             resources=resource_limits,
                         )
                         if phase == 0:
                             generate_batch_files >> task_dict[
                                 f"create_embedding_task_{pod}_{phase}"] >> data_audio_analysis_task >> trigger_dependent_dag
-                        # elif phase == total_phases - 1:
-                        #     task_dict[f"create_embedding_task_{pod}_{phase - 1}"] >> task_dict[
-                        #         f"create_embedding_task_{pod}_{phase}"] >> data_audio_analysis_task
                         else:
                             task_dict[f"create_embedding_task_{pod}_{phase - 1}"] >> task_dict[
                                 f"create_embedding_task_{pod}_{phase}"] >> data_audio_analysis_task >> trigger_dependent_dag
-            # if phase == total_phases - 1:
-            #     task_dict[f"create_embedding_task_{last_pod_no}_{phase}"] >> data_audio_analysis_task
         else:
             generate_batch_files >> data_audio_analysis_task >> trigger_dependent_dag
 
     return dag
-
 
 for source in audio_analysis_config.keys():
     source_info = audio_analysis_config.get(source)
@@ -164,7 +154,7 @@ for source in audio_analysis_config.keys():
     dag_id = source + '_' + language + '_' + 'audio_embedding_analysis'
 
     dag_args = {
-        "email": ["soujyo.sen@thoughtworks.com"],
+        "email": ["your_email@example.com"],  # Update email as necessary
     }
 
     args = {
@@ -173,8 +163,6 @@ for source in audio_analysis_config.keys():
         "language": language,
         "source": source
     }
-
-    # schedule = '@daily'
 
     dag_number = dag_id + str(max_records_threshold_per_pod)
 

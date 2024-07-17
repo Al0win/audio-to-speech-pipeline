@@ -1,5 +1,8 @@
+#!/bin/bash
 source scripts/set_env.sh
 
-composer=$(gcloud composer environments describe ${COMPOSER_ENV_NAME} --location ${LOCATION} | grep  ${CLUSTER} | cut -d '/' -f 6-)
+# Get AKS credentials
+az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${AKS_CLUSTER_NAME}
 
-gcloud container clusters get-credentials ${composer} --zone ${ZONE} --project ${GCP_PROJECT}
+# Verify that kubectl is configured to use the AKS cluster
+kubectl get nodes

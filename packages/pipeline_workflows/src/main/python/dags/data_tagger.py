@@ -1,15 +1,15 @@
-# [START composer_kubernetespodoperator]
 import datetime
 import json
 
 from airflow import models
 from airflow.contrib.kubernetes import secret
-from airflow.contrib.operators import kubernetes_pod_operator
+from airflow.contrib.operators.kubernetes_pod_operator import KubernetesPodOperator
 from airflow.models import Variable
 from airflow.operators.python_operator import PythonOperator
 
 from move_exp_data_dag_processor import count_utterances_file_chunks, copy_utterances
 
+# Load variables
 composer_namespace = Variable.get("composer_namespace")
 bucket_name = Variable.get("bucket")
 env_name = Variable.get("env")
@@ -18,23 +18,26 @@ project = Variable.get("project")
 
 YESTERDAY = datetime.datetime.now() - datetime.timedelta(days=1)
 
+# Define Kubernetes secret
 secret_file = secret.Secret(
     deploy_type="volume",
     deploy_target="/tmp/secrets/google",
     secret="gc-storage-rw-key",
     key="key.json",
 )
-dag_id = "data_tagger_pipeline"
-dag_number = dag_id
 
+# DAG definition
+dag_id = "data_tagger_pipeline"
 dag = models.DAG(
     dag_id,
     schedule_interval=datetime.timedelta(days=1),
     default_args=default_args,
     start_date=YESTERDAY,
 )
+
 with dag:
-    kubernetes_list_bucket_pod = kubernetes_pod_operator.KubernetesPodOperator(
+    # Task to run the data tagger
+    kubernetes_list_bucket_pod = KubernetesPodOperator(
         task_id="data-tagger",
         name="data-tagger",
         cmds=[
@@ -45,7 +48,6 @@ with dag:
             bucket_name,
             "data/audiotospeech/config/datatagger/config.yaml",
         ],
-        # namespace='composer-1-10-4-airflow-1-10-6-3b791e93',
         namespace=composer_namespace,
         startup_timeout_seconds=300,
         secrets=[secret_file],
@@ -53,29 +55,28 @@ with dag:
         image_pull_policy="Always",
     )
 
+    # Task to count utterances file chunks
     count_utterances_chunks_list = PythonOperator(
-        task_id=dag_id + "_count_utterances_file_chunks",
+        task_id=f"{dag_id}_count_utterances_file_chunks",
         python_callable=count_utterances_file_chunks,
         op_kwargs={"source": dag_id},
-        dag_number=dag_number,
     )
 
     kubernetes_list_bucket_pod >> count_utterances_chunks_list
 
+    # Load utterances chunks list and batch count
     utterances_chunks_list = json.loads(Variable.get("utteranceschunkslist"))
-    utterances_batch_count = Variable.get("utterancesconcurrentbatchcount")
-    # print(utterances_chunks_list,type(utterances_chunks_list))
-    # if len(utterances_chunks_list['utteranceschunkslist']) > 0:
-    for index, utterances_chunk in enumerate(
-        utterances_chunks_list["utteranceschunkslist"]
-    ):
-        if index > (int(utterances_batch_count) - 1):
+    utterances_batch_count = int(Variable.get("utterancesconcurrentbatchcount"))
+
+    # Create copy tasks for utterances chunks
+    for index, utterances_chunk in enumerate(utterances_chunks_list["utteranceschunkslist"]):
+        if index >= utterances_batch_count:
             break
-        else:
-            copy_utterance_files = PythonOperator(
-                task_id=dag_id + "_copy_utterances_" + str(index),
-                python_callable=copy_utterances,
-                op_kwargs={"src_file_name": utterances_chunk},
-                dag_number=dag_number,
-            )
-            count_utterances_chunks_list >> copy_utterance_files
+
+        copy_utterance_files = PythonOperator(
+            task_id=f"{dag_id}_copy_utterances_{index}",
+            python_callable=copy_utterances,
+            op_kwargs={"src_file_name": utterances_chunk},
+        )
+        
+        count_utterances_chunks_list >> copy_utterance_files

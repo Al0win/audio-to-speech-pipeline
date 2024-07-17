@@ -3,16 +3,15 @@ import json
 import math
 
 from airflow import DAG
-from airflow.contrib.kubernetes import secret
-from airflow.contrib.operators import kubernetes_pod_operator
+from azure.kubernetes import secret  # Adjusted import for Azure
+from azure.kubernetes import KubernetesPodOperator  # Adjusted import for Azure
 from airflow.models import Variable
 from airflow.operators import TriggerDagRunOperator
 from airflow.operators.python_operator import PythonOperator
 from helper_dag import fetch_require_audio_ids_for_stt, fetch_upload_db_data_dump
 
 sourceinfo = json.loads(Variable.get("sourceinfo"))
-# stt_source_path = Variable.get("sttsourcepath")
-bucket_name = Variable.get("bucket")
+storage_account_name = Variable.get("storage_account_name")  # Use Azure storage
 env_name = Variable.get("env")
 composer_namespace = Variable.get("composer_namespace")
 resource_limits = json.loads(Variable.get("stt_resource_limits"))
@@ -20,18 +19,13 @@ YESTERDAY = datetime.datetime.now() - datetime.timedelta(days=1)
 LANGUAGE_CONSTANT = "{language}"
 project = Variable.get("project")
 
+# Define a secret from Azure
 secret_file = secret.Secret(
     deploy_type="volume",
-    deploy_target="/tmp/secrets/google",
-    secret="gc-storage-rw-key",
+    deploy_target="/tmp/secrets/azure",  # Update to your Azure secret location
+    secret="azure-storage-key",  # Update to your Azure storage secret name
     key="key.json",
 )
-
-
-# def interpolate_language_paths(language):
-#     stt_source_path_set = stt_source_path.replace(LANGUAGE_CONSTANT, language)
-#     return stt_source_path_set
-
 
 def create_dag(dag_id, dag_number, default_args, args, batch_count):
     dag = DAG(
@@ -42,14 +36,13 @@ def create_dag(dag_id, dag_number, default_args, args, batch_count):
     )
 
     with dag:
-
         language = args.get("language")
         data_set = args.get("data_set")
         source_path = args.get("source_path")
         stt = args.get("stt")
         print(args)
         print(f"Language for source is {language}")
-        # stt_source_path_set = interpolate_language_paths(language)
+
         next_dag_id = 'trigger_training'
         trigger_dependent_dag = TriggerDagRunOperator(
             task_id="trigger_dependent_dag_" + next_dag_id,
@@ -64,7 +57,7 @@ def create_dag(dag_id, dag_number, default_args, args, batch_count):
                 "language": language.title(),
                 "stt": stt,
                 "data_set": data_set,
-                "bucket_name": bucket_name,
+                "bucket_name": storage_account_name,
             },
             dag_number=dag_number,
         )
@@ -75,7 +68,7 @@ def create_dag(dag_id, dag_number, default_args, args, batch_count):
             op_kwargs={
                 "source": dag_id,
                 "language": language.title(),
-                "bucket_name": bucket_name
+                "bucket_name": storage_account_name,
             },
             dag_number=dag_number,
         )
@@ -103,7 +96,6 @@ def create_dag(dag_id, dag_number, default_args, args, batch_count):
                         del d[c[i]]
                     else:
                         d[c[i]] = abs(diff)
-                    # each_pod_batch_size = diff
                     break
                 c = list(d.keys())
                 e = list(d.values())
@@ -119,24 +111,16 @@ def create_dag(dag_id, dag_number, default_args, args, batch_count):
         while audio_file_ids:
             audio_file_ids, batch = batch_audio_ids(audio_file_ids, each_pod_batch_size)
             batches.append(batch)
-        # batches = []
-        #
-        # if len(audio_file_ids) > 0:
-        #     chunk_size = math.ceil(len(audio_file_ids) / parallelism)
-        #     batches = [
-        #         audio_file_ids[i: i + chunk_size]
-        #         for i in range(0, len(audio_file_ids), chunk_size)
-        #     ]
 
         for batch_audio_file_ids in batches:
-            data_prep_task = kubernetes_pod_operator.KubernetesPodOperator(
+            data_prep_task = KubernetesPodOperator(
                 task_id=dag_id + "_data_stt_" + batch_audio_file_ids[0],
                 name="data-prep-stt",
                 cmds=[
                     "python",
                     "invocation_script.py",
                     "-b",
-                    bucket_name,
+                    storage_account_name,  # Use Azure storage account
                     "-a",
                     "audio_transcription",
                     "-rc",
@@ -157,7 +141,7 @@ def create_dag(dag_id, dag_number, default_args, args, batch_count):
                 namespace=composer_namespace,
                 startup_timeout_seconds=300,
                 secrets=[secret_file],
-                image=f"us.gcr.io/{project}/ekstep_data_pipelines:{env_name}_1.0.0",
+                image=f"myregistry.azurecr.io/ekstep_data_pipelines:{env_name}_1.0.0",  # Use Azure Container Registry
                 image_pull_policy="Always",
                 resources=resource_limits,
             )

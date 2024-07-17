@@ -22,19 +22,16 @@ install_dependencies:
 	pip install -r requirements.txt
 	make install_external
 
-gcloud_setup:
+azure_setup:
 	mkdir -p .workspace
-	wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-265.0.0-linux-x86_64.tar.gz -P .workspace
-	tar -zxf .workspace/google-cloud-sdk-* --directory .workspace
-	./.workspace/google-cloud-sdk/install.sh --quiet
-	rm -vf .workspace/google-cloud-sdk-*.tar.gz
+	curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
-gcloud_login:
-	./.workspace/google-cloud-sdk/bin/gcloud auth login
+azure_login:
+	az login --service-principal -u $(AZURE_CLIENT_ID) -p $(AZURE_CLIENT_SECRET) --tenant $(AZURE_TENANT_ID)
 
 setup_cloud_proxy:
 	mkdir -p .workspace
-	wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O .workspace/cloud_sql_proxy
+	wget https://github.com/GoogleCloudPlatform/cloudsql-proxy/releases/download/v1.28.0/cloud_sql_proxy.linux.amd64 -O .workspace/cloud_sql_proxy
 	chmod +x ./.workspace/cloud_sql_proxy
 
 start_proxy:
@@ -50,8 +47,8 @@ mac_setup:
 	make python_setup
 	make install_dependencies
 	make apply_dev_policy
-	make gcloud_setup
-	make gcloud_login
+	make azure_setup
+	make azure_login
 
 
 linux_setup:
@@ -65,9 +62,9 @@ linux_setup:
 	make python_setup
 	make install_dependencies
 	make apply_dev_policy
-	echo ${$GOOGLE_APPLICATION_CREDENTIALS} > gcp-key.json
-	./google-cloud-sdk/bin/gcloud auth activate-service-account --key-file gcp-key.json
-	./google-cloud-sdk/bin/gcloud --quiet config set project ${$GOOGLE_APPLICATION_CREDENTIALS}
+	echo ${AZURE_CREDENTIALS} > azure-key.json
+	az login --service-principal -u $(AZURE_CLIENT_ID) -p $(AZURE_CLIENT_SECRET) --tenant $(AZURE_TENANT_ID)
+	az account set --subscription $(AZURE_SUBSCRIPTION_ID)
 	make setup_cloud_proxy
 
 apply_dev_policy:

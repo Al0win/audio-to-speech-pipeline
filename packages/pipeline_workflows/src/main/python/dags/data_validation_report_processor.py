@@ -9,8 +9,59 @@ import numpy as np
 import pandas as pd
 import yaml
 from sqlalchemy import create_engine
+from azure.storage.blob import BlobServiceClient
 
-from gcs_utils import list_blobs_in_a_path, upload_blob, download_blob
+# Azure Blob Storage client setup
+connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+
+# Function to list blobs in Azure Blob Storage
+def list_blobs_in_a_path(container_name, path):
+    container_client = blob_service_client.get_container_client(container_name)
+    return [blob for blob in container_client.list_blobs(name_starts_with=path)]
+
+# Function to upload a blob to Azure Blob Storage
+def upload_blob(container_name, file_name, blob_path):
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+    with open(file_name, "rb") as data:
+        blob_client.upload_blob(data)
+
+# Function to download a blob from Azure Blob Storage
+def download_blob(container_name, blob_path, file_name):
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+    with open(file_name, "wb") as data:
+        data.write(blob_client.download_blob().readall())
+
+# Replace the GCP-specific function calls with Azure Blob Storage equivalents
+def get_config_variables(stage):
+    global config_path
+    config_path = f"./config_{stage}.yaml"
+    print("Downloading config file for validation report job")
+    download_blob(
+        "your-container-name",  # Replace with your Azure Blob container name
+        f"data/audiotospeech/config/validation_report_dag/config_{stage}.yaml",
+        config_path,
+    )
+    variables = __load_yaml_file()["report_configuration"]
+    return variables
+
+# Continue replacing GCP-specific logic with Azure equivalent throughout the code...
+
+# Ensure to update the database connection setup if needed
+def create_db_engine():
+    # Update connection string for Azure SQL Database
+    config_file = __load_yaml_file()
+    db_configuration = config_file["db_configuration"]
+    db_name = db_configuration["db_name"]
+    db_user = db_configuration["db_user"]
+    db_pass = db_configuration["db_pass"]
+    server = db_configuration["server"]  # Update for Azure SQL
+    db = create_engine(
+        f"mssql+pyodbc://{db_user}:{db_pass}@{server}/{db_name}?driver=ODBC+Driver+17+for+SQL+Server"
+    )
+    return db
+
+# Continue with the rest of the code...
 
 pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
@@ -604,19 +655,6 @@ def __load_yaml_file():
     with open(config_path, "r") as file:
         read_dict = yaml.safe_load(file)
     return read_dict
-
-
-def create_db_engine():
-    config_file = __load_yaml_file()
-    db_configuration = config_file["db_configuration"]
-    db_name = db_configuration["db_name"]
-    db_user = db_configuration["db_user"]
-    db_pass = db_configuration["db_pass"]
-    cloud_sql_connection_name = db_configuration["cloud_sql_connection_name"]
-    db = create_engine(
-        f"postgresql://{db_user}:{db_pass}@{cloud_sql_connection_name}/{db_name}"
-    )
-    return db
 
 
 def get_db_connection_object():

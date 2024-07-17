@@ -34,11 +34,11 @@ jobs:
       - run:
           name: Deploy Pipeline Workflow DAG
           command: |
-            echo ${GOOGLE_AUTH} > ${HOME}/gcp-key.json
-            gcloud auth activate-service-account --key-file ${HOME}/gcp-key.json
-            gcloud --quiet config set project ${GCP_PROJECT}
+            echo ${AZURE_AUTH} > ${HOME}/azure-auth.json
+            az login --service-principal --username ${AZURE_CLIENT_ID} --password ${AZURE_CLIENT_SECRET} --tenant ${AZURE_TENANT_ID}
+            az account set --subscription ${AZURE_SUBSCRIPTION_ID}
             sh ~/project/packages/pipeline_workflows/deployDAG.sh << parameters.env_name >>
-            rm ${HOME}/gcp-key.json
+            rm ${HOME}/azure-auth.json
 
   build:
     parameters:
@@ -51,7 +51,6 @@ jobs:
     steps:
       - checkout:
           path: ~/project
-      # This step is added only to show that we are in the package directory
       - run:
           name: Sanity check to confirm correct package directory
           command: echo "Current package directory is << parameters.package_name >> ..."
@@ -67,28 +66,17 @@ jobs:
             pip install --upgrade pip
             pip install -r requirements.txt
             python --version ; pip --version ; pwd ; ls
-      # - run:
-      #     name: Run Tests
-      #     command: |
-      #       coverage run -m unittest discover src/tests
-      #       coverage report --fail-under 20  src/scripts/*.py
-      #       coverage html  # open htmlcov/index.html in a browser
-      # - store_artifacts:
-      #     path: htmlcov
       - persist_to_workspace:
           root: ~/project
           paths:
             - packages/<< parameters.package_name >>
 
   ekstep_build:
-
     executor: node
     working_directory: ~/project/packages
-
     steps:
       - checkout:
           path: ~/project
-      # This step is added only to show that we are in the package directory
       - run:
           name: Setup Testing Environment
           command: |
@@ -109,55 +97,43 @@ jobs:
             pylint `pwd`  --exit-zero > linting_report/linting_report_.txt
       - store_artifacts:
           path: linting_report
-      # - run:
-      #     name: Run Tests
-      #     command: |
-      #       coverage run -m unittest discover -s ekstep_pipelines_tests/ -p "*_tests.py" -v
-      #       #coverage report --fail-under 65
-      #       coverage html
-      #       echo 'open htmlcov/index.html in a browser from circleci artifacts'
-      # - store_artifacts:
-      #     path: htmlcov
       - persist_to_workspace:
           root: ~/project
           paths:
             - packages
+
   deploy:
     parameters:
       package_version:
         type: string
       env_name:
         type: string
-    #    executor: node
     machine:
       image: ubuntu-1604:201903-01
     working_directory: ~/project/packages
-
     steps:
       - attach_workspace:
           at: ~/project
-      # This step is added to show that files are available from the build job.
       - run:
           name: Content to deploy
           command: ls
-      - deploy:
+      - run:
           name: Build and Deploy Image
           command: |
-            echo ${GOOGLE_AUTH} > ${HOME}/gcp-key.json
-            gcloud auth activate-service-account --key-file ${HOME}/gcp-key.json
-            gcloud --quiet config set project ${GCP_PROJECT}
+            echo ${AZURE_AUTH} > ${HOME}/azure-auth.json
+            az login --service-principal --username ${AZURE_CLIENT_ID} --password ${AZURE_CLIENT_SECRET} --tenant ${AZURE_TENANT_ID}
+            az account set --subscription ${AZURE_SUBSCRIPTION_ID}
             if [[ << parameters.env_name >> == "test" ]]; then
-              echo "Build ..."
-              docker build --rm=false -t us.gcr.io/${GCP_PROJECT}/ekstep_data_pipelines:<< parameters.package_version >> -t us.gcr.io/${GCP_PROJECT}/ekstep_data_pipelines:<< parameters.env_name >>_<< parameters.package_version >> .
+              docker build --rm=false -t ${AZURE_CONTAINER_REGISTRY}.azurecr.io/ekstep_data_pipelines:<< parameters.package_version >> -t ${AZURE_CONTAINER_REGISTRY}.azurecr.io/ekstep_data_pipelines:<< parameters.env_name >>_<< parameters.package_version >> .
             else
-             gcloud docker -- pull us.gcr.io/${GCP_PROJECT}/ekstep_data_pipelines:<< parameters.package_version >>
-             echo "Tag ekstep_data_pipelines ... with << parameters.env_name >>"
-             docker tag us.gcr.io/${GCP_PROJECT}/ekstep_data_pipelines:<< parameters.package_version >> us.gcr.io/${GCP_PROJECT}/ekstep_data_pipelines:<< parameters.env_name >>_<< parameters.package_version >>
+              az acr repository show --name ${AZURE_CONTAINER_REGISTRY} --image ekstep_data_pipelines:<< parameters.package_version >>
+              docker tag ${AZURE_CONTAINER_REGISTRY}.azurecr.io/ekstep_data_pipelines:<< parameters.package_version >> ${AZURE_CONTAINER_REGISTRY}.azurecr.io/ekstep_data_pipelines:<< parameters.env_name >>_<< parameters.package_version >>
             fi
-            gcloud docker -- push us.gcr.io/${GCP_PROJECT}/ekstep_data_pipelines
+            az acr repository push --name ${AZURE_CONTAINER_REGISTRY} --image ekstep_data_pipelines:<< parameters.package_version >>
       - run:
           name: Remove account details
-          command: rm ${HOME}/gcp-key.json ; ls
+          command: rm ${HOME}/azure-auth.json ; ls
+
   approval_for_prod_deploy:
     docker:
       - image: circleci/node:4.8.2
@@ -166,13 +142,11 @@ jobs:
 
   E2E:
     working_directory: ~/E2E
-
     docker:
       - image: circleci/openjdk:8-jdk-stretch
         environment:
           POSTGRES_USER: $POSTGRES_USER
           POSTGRES_PASSWORD: $POSTGRES_PASSWORD
-
     steps:
       - checkout:
           path: ~/project
@@ -180,32 +154,22 @@ jobs:
           name: E2E Tests
           command: |
             mkdir -p ~/.ssh
-
             echo ${SSH} > ~/.ssh/known_hosts
-
             cat ~/.ssh/known_hosts
-
             git clone git@github.com:Open-Speech-EkStep/E2ETest.git
-            pwd
             cd ${HOME}
-            wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-265.0.0-linux-x86_64.tar.gz
-            tar -zxf google-cloud-sdk-*
-            cd google-cloud-sdk
-            pwd
-            ./install.sh --quiet
-            echo ${GOOGLE_AUTH} > ${HOME}/gcp-key.json
-            ./bin/gcloud auth activate-service-account --key-file ${HOME}/gcp-key.json
-            ./bin/gcloud --quiet config set project ${GCP_PROJECT}
-            export GOOGLE_APPLICATION_CREDENTIALS=${HOME}/gcp-key.json
-            echo $GOOGLE_APPLICATION_CREDENTIALS
+            wget https://aka.ms/InstallAzureCLIDeb | sudo bash
+            echo ${AZURE_AUTH} > ${HOME}/azure-auth.json
+            az login --service-principal --username ${AZURE_CLIENT_ID} --password ${AZURE_CLIENT_SECRET} --tenant ${AZURE_TENANT_ID}
+            az account set --subscription ${AZURE_SUBSCRIPTION_ID}
+            export AZURE_APPLICATION_CREDENTIALS=${HOME}/azure-auth.json
+            echo $AZURE_APPLICATION_CREDENTIALS
             wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O cloud_sql_proxy
             chmod +x cloud_sql_proxy
-            nohup ./cloud_sql_proxy -dir=./cloudsql -instances=ekstepspeechrecognition:us-central1:crowdsourcedb=tcp:5432 &
+            nohup ./cloud_sql_proxy -dir=./cloudsql -instances=${AZURE_PROJECT}:us-central1:${DB_INSTANCE}=tcp:5432 &
             sleep 25s
             cat nohup.out
             cd ~/E2E/E2ETest
-            pwd
-            ls
             mvn dependency:go-offline
             mvn package
 
@@ -216,13 +180,11 @@ jobs:
       env_name:
         type: string
     working_directory: ~/project/
-
     docker:
       - image: circleci/python:3.8.6
         environment:
           POSTGRES_USER: $POSTGRES_USER
           POSTGRES_PASSWORD: $POSTGRES_PASSWORD
-
     steps:
       - checkout:
           path: ~/project
@@ -233,19 +195,15 @@ jobs:
             echo ${SSH} > ~/.ssh/known_hosts
             cat ~/.ssh/known_hosts
             cd ${HOME}
-            wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-265.0.0-linux-x86_64.tar.gz
-            tar -zxf google-cloud-sdk-*
-            cd google-cloud-sdk
-            pwd
-            ./install.sh --quiet
-            echo ${GOOGLE_AUTH} > ${HOME}/gcp-key.json
-            ./bin/gcloud auth activate-service-account --key-file ${HOME}/gcp-key.json
-            ./bin/gcloud --quiet config set project ${GCP_PROJECT}
-            export GOOGLE_APPLICATION_CREDENTIALS=${HOME}/gcp-key.json
-            echo $GOOGLE_APPLICATION_CREDENTIALS
+            wget https://aka.ms/InstallAzureCLIDeb | sudo bash
+            echo ${AZURE_AUTH} > ${HOME}/azure-auth.json
+            az login --service-principal --username ${AZURE_CLIENT_ID} --password ${AZURE_CLIENT_SECRET} --tenant ${AZURE_TENANT_ID}
+            az account set --subscription ${AZURE_SUBSCRIPTION_ID}
+            export AZURE_APPLICATION_CREDENTIALS=${HOME}/azure-auth.json
+            echo $AZURE_APPLICATION_CREDENTIALS
             wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O cloud_sql_proxy
             chmod +x cloud_sql_proxy
-            nohup ./cloud_sql_proxy -dir=./cloudsql -instances=${GCP_PROJECT}:us-central1:${DB_INSTANCE}=tcp:5432 &
+            nohup ./cloud_sql_proxy -dir=./cloudsql -instances=${AZURE_PROJECT}:us-central1:${DB_INSTANCE}=tcp:5432 &
             sleep 25s
             cat nohup.out
             pip install yoyo-migrations
@@ -265,8 +223,6 @@ jobs:
 workflows:
   version: 2
 
-  # Workflows defined for each package.
-
   ekstep_data_pipelines:
     jobs:
       - ekstep_build:
@@ -284,19 +240,12 @@ workflows:
           requires:
             - ekstep_data_pipelines_deploy_test
       - build-dags:
-          name: pipeline-dag-build_test
+          name: deploy-pipeline-workflow-dags-test
+          env_name: test
           package_name: pipeline_workflows
-          env_name: 'test'
           requires:
-            - ekstep-database-migrations-apply-test
-      - E2E:
-          name: ekstep_data_pipelines_e2e_build
-          requires:
-            - pipeline-dag-build_test
-      - approval_for_prod_deploy:
-          type: approval
-          requires:
-            - ekstep_data_pipelines_e2e_build
+            - ekstep_data_pipelines_deploy_test
+      - approval_for_prod_deploy
       - deploy:
           name: ekstep_data_pipelines_deploy_prod
           env_name: prod
@@ -309,17 +258,9 @@ workflows:
           env_name: 'prod'
           requires:
             - ekstep_data_pipelines_deploy_prod
-      - approval_for_prod_deploy:
-          name: approval-for-prod-dag-deploy
-          type: approval
+      - build-dags:
+          name: deploy-pipeline-workflow-dags-prod
+          env_name: prod
+          package_name: pipeline_workflows
           requires:
             - ekstep_data_pipelines_deploy_prod
-      - build-dags:
-          name: pipeline-dag-build_prod
-          package_name: pipeline_workflows
-          env_name: 'prod'
-          requires:
-            - ekstep-database-migrations-apply-prod
-            - approval-for-prod-dag-deploy
-
-
