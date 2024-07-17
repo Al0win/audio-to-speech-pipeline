@@ -2,29 +2,20 @@ import datetime
 import json
 
 from airflow import models
-from airflow.contrib.kubernetes import secret
-from airflow.contrib.operators.kubernetes_pod_operator import KubernetesPodOperator
+from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
 from airflow.models import Variable
-from airflow.operators.python_operator import PythonOperator
+from airflow.operators.python import PythonOperator
 
 from move_exp_data_dag_processor import count_utterances_file_chunks, copy_utterances
 
 # Load variables
 composer_namespace = Variable.get("composer_namespace")
-bucket_name = Variable.get("bucket")
+bucket_name = Variable.get("azure_blob_container")  # Update variable for Azure Blob Storage
 env_name = Variable.get("env")
-default_args = {"email": ["gaurav.gupta@thoughtworks.com"]}
+default_args = {"email": ["your_email@example.com"]}  # Update to your email
 project = Variable.get("project")
 
 YESTERDAY = datetime.datetime.now() - datetime.timedelta(days=1)
-
-# Define Kubernetes secret
-secret_file = secret.Secret(
-    deploy_type="volume",
-    deploy_target="/tmp/secrets/google",
-    secret="gc-storage-rw-key",
-    key="key.json",
-)
 
 # DAG definition
 dag_id = "data_tagger_pipeline"
@@ -50,8 +41,7 @@ with dag:
         ],
         namespace=composer_namespace,
         startup_timeout_seconds=300,
-        secrets=[secret_file],
-        image=f"us.gcr.io/{project}/data_tagger:{env_name}_1.0.0",
+        image=f"your_azure_container_registry.azurecr.io/{project}/data_tagger:{env_name}_1.0.0",  # Update image path
         image_pull_policy="Always",
     )
 
