@@ -7,16 +7,14 @@ from ekstep_data_pipelines.audio_analysis.audio_analysis import AudioAnalysis
 from ekstep_data_pipelines.audio_cataloguer.cataloguer import AudioCataloguer
 from ekstep_data_pipelines.audio_embedding.audio_embedding import AudioEmbedding
 from ekstep_data_pipelines.audio_processing.audio_processer import AudioProcessor
-from ekstep_data_pipelines.audio_transcription.audio_transcription import (
-    AudioTranscription,
-)
+from ekstep_data_pipelines.audio_transcription.audio_transcription import AudioTranscription
 from ekstep_data_pipelines.common import get_periperhals
 from ekstep_data_pipelines.common.utils import get_logger
 from ekstep_data_pipelines.data_marker.data_marker import DataMarker
 from ekstep_data_pipelines.ulca.ulca_dataset import ULCADataset
-from google.cloud import storage
+from azure.storage.blob import BlobServiceClient
 
-STT_CLIENT = ["google", "azure", "ekstep"]
+STT_CLIENT = ["azure", "ekstep"]
 
 
 class ACTIONS:
@@ -30,7 +28,7 @@ class ACTIONS:
 
 
 class FileSystems:
-    GOOGLE = "google"
+    AZURE = "azure"
     LOCAL = "local"
 
 
@@ -44,16 +42,16 @@ ACTIONS_LIST = [
     ACTIONS.AUDIO_EMBEDDING,
     ACTIONS.ULCA_DATASET
 ]
-FILES_SYSTEMS_LIST = [FileSystems.GOOGLE, FileSystems.LOCAL]
+FILES_SYSTEMS_LIST = [FileSystems.AZURE, FileSystems.LOCAL]
 
 parser = argparse.ArgumentParser(description="Util for data processing for EkStep")
 
 parser.add_argument(
     "-b",
-    "--bucket",
-    dest="config_bucket",
+    "--container",
+    dest="config_container",
     default="ekstepspeechrecognition-dev",
-    help="Bucket name as per the environment",
+    help="Azure Blob Storage container name as per the environment",
 )
 
 parser.add_argument(
@@ -71,7 +69,7 @@ parser.add_argument(
     "--config-path",
     dest="local_config",
     default=None,
-    help="path to local config, use this when running on local",
+    help="Path to local config, use this when running locally",
 )
 
 parser.add_argument(
@@ -79,7 +77,7 @@ parser.add_argument(
     "--remote-config-path",
     dest="remote_config",
     default=None,
-    help="path to remote gcs config file. Use this when running on cluster mode",
+    help="Path to remote blob config file. Use this when running on cluster mode",
 )
 
 parser.add_argument(
@@ -87,8 +85,8 @@ parser.add_argument(
     "--filename-list",
     dest="file_name_list",
     default=[],
-    help="list of all the filename that need to processed, this needs to a comma seperated "
-         "list eg. audio_id1,audio_id2 . Only works with the audio processor",
+    help="List of all the filenames that need to be processed, this needs to be a comma-separated "
+         "list eg. audio_id1,audio_id2. Only works with the audio processor",
 )
 
 parser.add_argument(
@@ -96,8 +94,8 @@ parser.add_argument(
     "--audio-ids",
     dest="audio_ids",
     default=[],
-    help="list of all the audio ids that need to processed, this needs to a comma seperated "
-         "list eg. audio_id1,audio_id2 . Only works with the audio processor",
+    help="List of all the audio IDs that need to be processed, this needs to be a comma-separated "
+         "list eg. audio_id1,audio_id2. Only works with the audio processor",
 )
 
 parser.add_argument(
@@ -114,7 +112,7 @@ parser.add_argument(
     "--audio-format",
     dest="audio_format",
     default=None,
-    help="The format of the audio which is being processed eg mp4,mp3 . Only works with "
+    help="The format of the audio which is being processed eg mp4,mp3. Only works with "
          "audio processor",
 )
 
@@ -123,7 +121,7 @@ parser.add_argument(
     "--speech-to-text",
     dest="speech_to_text_client",
     default=None,
-    help="The client name which we want to call for stt",
+    help="The client name which we want to call for STT",
 )
 
 parser.add_argument(
@@ -147,7 +145,7 @@ parser.add_argument(
     "--file-path",
     dest="file_path",
     default=None,
-    help="The parameters that need to be used in audio embedding and data marking",
+    help="The path that needs to be used in audio embedding and data marking",
 )
 
 parser.add_argument(
@@ -155,7 +153,7 @@ parser.add_argument(
     "--source-path-stt",
     dest="source_path_stt",
     default='dummy',
-    help="The parameters that need to be used in audio stt for non default path",
+    help="The parameters that need to be used in audio STT for non-default path",
 )
 
 parser.add_argument(
@@ -163,14 +161,14 @@ parser.add_argument(
     "--data-set",
     dest="data_set",
     default=None,
-    help="The dataset type that need to be used in audio embedding",
+    help="The dataset type that needs to be used in audio embedding",
 )
 parser.add_argument(
     "-f",
     "--file_system",
     dest="file_system",
     choices=FILES_SYSTEMS_LIST,
-    default="google",
+    default="azure",
     help="Specify the file system to use for running the pipeline",
     required=False,
 )
@@ -179,7 +177,7 @@ parser.add_argument(
     "-ulca_config",
     "--ulca_config",
     dest="ulca_config",
-    help="Specify ulca config",
+    help="Specify ULCA config",
     required=False,
 )
 
@@ -190,17 +188,18 @@ parser.add_argument(
 processor_args = parser.parse_args()
 
 
-def download_config_file(config_file_path, config_bucket):
-    LOGGER.info("Downloading config file from Google Cloud Storage")
+def download_config_file(config_file_path, config_container):
+    LOGGER.info("Downloading config file from Azure Blob Storage")
 
     download_file_path = f"/tmp/{str(uuid.uuid4())}"
-    gcs_storage_client = storage.Client()
-    bucket = gcs_storage_client.bucket(config_bucket)
+    connect_str = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+    blob_service_client = BlobServiceClient.from_connection_string(connect_str)
+    blob_client = blob_service_client.get_blob_client(container=config_container, blob=config_file_path)
 
-    LOGGER.info("Getting config file from config bucket %s", config_bucket)
+    LOGGER.info("Getting config file from config container %s", config_container)
 
-    src_blob = bucket.blob(config_file_path)
-    src_blob.download_to_filename(download_file_path)
+    with open(download_file_path, "wb") as download_file:
+        download_file.write(blob_client.download_blob().readall())
 
     LOGGER.info("Config file downloaded to %s", download_file_path)
 
@@ -208,9 +207,9 @@ def download_config_file(config_file_path, config_bucket):
 
 
 def process_config_input(arguments):
-    LOGGER.info("validating config file path")
+    LOGGER.info("Validating config file path")
 
-    LOGGER.info("Checking configeration file path")
+    LOGGER.info("Checking configuration file path")
     config_file_path = None
 
     if arguments.local_config is None and arguments.remote_config is None:
@@ -218,7 +217,7 @@ def process_config_input(arguments):
 
     if arguments.local_config is not None and arguments.remote_config is not None:
         raise argparse.ArgumentTypeError(
-            "mulitple configs specified, specify only local_config or remote_config but not both"
+            "Multiple configs specified; specify only local_config or remote_config but not both"
         )
 
     if arguments.local_config:
@@ -233,11 +232,11 @@ def process_config_input(arguments):
 
     if arguments.remote_config:
         LOGGER.info(
-            "http/https file path %s found for config file. " "Downloading config file",
+            "HTTP/HTTPS file path %s found for config file. Downloading config file",
             arguments.remote_config,
         )
         config_file_path = download_config_file(
-            arguments.remote_config, arguments.config_bucket
+            arguments.remote_config, arguments.config_container
         )
 
     return config_file_path
@@ -253,7 +252,7 @@ def check_if_csv_file_path_valid(file_path):
 
 
 def validate_data_filter_config(arguments):
-    LOGGER.info("validating input for audio processing")
+    LOGGER.info("Validating input for audio processing")
 
     if arguments.audio_source is None:
         raise argparse.ArgumentTypeError("Source is missing")
@@ -275,26 +274,26 @@ def validate_data_filter_config(arguments):
             raise argparse.ArgumentTypeError("Filter spec has file_mode but no file path")
         if filter_spec_dict.get("file_path", None) is not None and not check_if_csv_file_path_valid(
                 filter_spec_dict.get("file_path", None)):
-            raise argparse.ArgumentTypeError("Filter spec has no valid csv file path")
+            raise argparse.ArgumentTypeError("Filter spec has no valid CSV file path")
 
     return {"filter_spec": filter_spec_dict,
             "source": arguments.audio_source}
 
 
 def validate_ulca_dataset_config(arguments):
-    LOGGER.info("validating input for ulca dataset")
+    LOGGER.info("Validating input for ULCA dataset")
 
     if arguments.audio_source is None:
         raise argparse.ArgumentTypeError("Source is missing")
 
     if arguments.ulca_config is None:
-        raise argparse.ArgumentTypeError("ulca_config is missing")
+        raise argparse.ArgumentTypeError("ULCA config is missing")
 
     return {"source": arguments.audio_source, "ulca_config": arguments.ulca_config}
 
 
 def validate_audio_analysis_config(arguments):
-    LOGGER.info("validating input for audio analysis")
+    LOGGER.info("Validating input for audio analysis")
 
     if arguments.audio_source is None:
         raise argparse.ArgumentTypeError("Source is missing")
@@ -302,19 +301,19 @@ def validate_audio_analysis_config(arguments):
 
 
 def validate_audio_embedding_config(arguments):
-    LOGGER.info("validating input for audio embedding")
+    LOGGER.info("Validating input for audio embedding")
 
     if arguments.file_path is None:
-        raise argparse.ArgumentTypeError(f"file path is missing")
+        raise argparse.ArgumentTypeError("File path is missing")
     return {"file_path": arguments.file_path}
 
 
 def validate_audio_processing_input(arguments):
-    LOGGER.info("validating input for audio processing")
+    LOGGER.info("Validating input for audio processing")
 
     if arguments.file_name_list == []:
         raise argparse.ArgumentTypeError(
-            "Audio Id list missing. Please specify comma seperated audio IDs for processing"
+            "Audio ID list missing. Please specify comma-separated audio IDs for processing"
         )
 
     file_name_list = [
@@ -323,19 +322,19 @@ def validate_audio_processing_input(arguments):
 
     if file_name_list == []:
         raise argparse.ArgumentTypeError(
-            "Audio Id list missing. Please specify comma seperated audio IDs for processing"
+            "Audio ID list missing. Please specify comma-separated audio IDs for processing"
         )
 
     if arguments.audio_source is None:
         raise argparse.ArgumentTypeError(
-            "Audio Source missing. Please specify source for the source for the audio"
+            "Audio Source missing. Please specify source for the audio"
         )
 
     audio_source = arguments.audio_source
 
     if arguments.audio_format is None:
         raise argparse.ArgumentTypeError(
-            "Audio format missing. Please specify formar for the audio"
+            "Audio format missing. Please specify format for the audio"
         )
 
     audio_format = arguments.audio_format
@@ -350,25 +349,25 @@ def validate_audio_processing_input(arguments):
 def validate_audio_transcription_input(arguments):
     if arguments.audio_ids == []:
         raise argparse.ArgumentTypeError(
-            "Audio Id list missing. Please audio ID for processing"
+            "Audio ID list missing. Please specify audio ID for processing"
         )
 
     audio_ids = [i.strip() for i in list(filter(None, arguments.audio_ids.split(",")))]
 
     if arguments.speech_to_text_client not in STT_CLIENT:
-        raise argparse.ArgumentTypeError("Stt client must be google or azure or ekstep")
+        raise argparse.ArgumentTypeError("STT client must be azure or ekstep")
 
     speech_to_text_client = arguments.speech_to_text_client
 
     if arguments.audio_source is None:
         raise argparse.ArgumentTypeError(
-            "Audio Source missing. Please specify source for the source for the audio"
+            "Audio Source missing. Please specify source for the audio"
         )
 
     audio_source = arguments.audio_source
 
     if arguments.data_set is None or (arguments.data_set not in ('train', 'test', '')):
-        raise argparse.ArgumentTypeError(f"data set type is missing or incorrect")
+        raise argparse.ArgumentTypeError("Data set type is missing or incorrect")
 
     data_set = arguments.data_set
 
@@ -390,36 +389,36 @@ def perform_action(arguments, **kwargs):
 
     if current_action == ACTIONS.DATA_MARKING:
         kwargs.update(validate_data_filter_config(arguments))
-        LOGGER.info("Intializing data marker with given config")
+        LOGGER.info("Initializing data marker with given config")
 
         config_params = {"config_file_path": kwargs.get("config_file_path")}
 
         object_dict = get_periperhals(config_params, arguments.language)
 
         data_processor = object_dict.get("data_processor")
-        gcs_instance = object_dict.get("gsc_instance")
+        blob_service_client = object_dict.get("blob_service_client")
 
         curr_processor = DataMarker.get_instance(
             data_processor,
-            gcs_instance,
+            blob_service_client,
             **{"commons_dict": object_dict, "file_interface": arguments.file_system},
         )
 
     elif current_action == ACTIONS.AUDIO_PROCESSING:
         kwargs.update(validate_audio_processing_input(arguments))
-        LOGGER.info("Intializing audio processor marker with given config")
+        LOGGER.info("Initializing audio processor with given config")
         config_params = {"config_file_path": kwargs.get("config_file_path")}
 
         object_dict = get_periperhals(config_params, arguments.language)
 
         data_processor = object_dict.get("data_processor")
-        gcs_instance = object_dict.get("gsc_instance")
+        blob_service_client = object_dict.get("blob_service_client")
         audio_commons = object_dict.get("audio_commons")
         catalogue_dao = object_dict.get("catalogue_dao")
 
         curr_processor = AudioProcessor.get_instance(
             data_processor,
-            gcs_instance,
+            blob_service_client,
             audio_commons,
             catalogue_dao,
             **{"commons_dict": object_dict, "file_interface": arguments.file_system},
@@ -427,26 +426,26 @@ def perform_action(arguments, **kwargs):
 
     elif current_action == ACTIONS.AUDIO_TRANSCRIPTION:
         kwargs.update(validate_audio_transcription_input(arguments))
-        LOGGER.info("Intializing audio processor marker with given config")
+        LOGGER.info("Initializing audio transcription processor with given config")
         config_params = {"config_file_path": kwargs.get("config_file_path")}
 
         object_dict = get_periperhals(config_params, arguments.language)
 
         data_processor = object_dict.get("data_processor")
-        gcs_instance = object_dict.get("gsc_instance")
+        blob_service_client = object_dict.get("blob_service_client")
         audio_commons = object_dict.get("audio_commons")
         catalogue_dao = object_dict.get("catalogue_dao")
 
         curr_processor = AudioTranscription.get_instance(
             data_processor,
-            gcs_instance,
+            blob_service_client,
             audio_commons,
             catalogue_dao,
             **{"commons_dict": object_dict, "file_interface": arguments.file_system},
         )
     elif current_action == ACTIONS.AUDIO_ANALYSIS:
         kwargs.update(validate_audio_analysis_config(arguments))
-        LOGGER.info("Intializing audio analysis processor with given config")
+        LOGGER.info("Initializing audio analysis processor with given config")
 
         config_params = {"config_file_path": kwargs.get("config_file_path")}
 
@@ -461,7 +460,7 @@ def perform_action(arguments, **kwargs):
         LOGGER.info("Starting processing for %s", current_action)
 
     elif current_action == ACTIONS.AUDIO_CATALOGUER:
-        LOGGER.info("Intializing data AudioCataloguer with given config")
+        LOGGER.info("Initializing AudioCataloguer with given config")
 
         config_params = {"config_file_path": kwargs.get("config_file_path")}
 
@@ -477,7 +476,7 @@ def perform_action(arguments, **kwargs):
 
         kwargs.update(validate_audio_embedding_config(arguments))
 
-        LOGGER.info("Intializing data AudioEmbedding with given config")
+        LOGGER.info("Initializing AudioEmbedding with given config")
 
         config_params = {"config_file_path": kwargs.get("config_file_path")}
 
@@ -491,7 +490,7 @@ def perform_action(arguments, **kwargs):
 
     elif current_action == ACTIONS.ULCA_DATASET:
         kwargs.update(validate_ulca_dataset_config(arguments))
-        LOGGER.info("Intializing ulca dataset process with given config")
+        LOGGER.info("Initializing ULCA dataset process with given config")
 
         config_params = {"config_file_path": kwargs.get("config_file_path")}
 
