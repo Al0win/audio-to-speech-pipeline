@@ -4,7 +4,7 @@ import os
 import pandas as pd
 from ekstep_data_pipelines.common import BaseProcessor
 from ekstep_data_pipelines.common import CatalogueDao
-from ekstep_data_pipelines.common.file_system.gcp_file_systen import GCPFileSystem
+from ekstep_data_pipelines.common.file_system.azure_file_system import AzureFileSystem
 from ekstep_data_pipelines.common.file_utils import *
 from ekstep_data_pipelines.common.utils import get_logger
 from ekstep_data_pipelines.data_marker.constants import (
@@ -33,24 +33,24 @@ Logger = get_logger("Data marker")
 class DataMarker(BaseProcessor):
     """
     1. Load Configuration
-    2. Filter data baased on criteria
+    2. Filter data based on criteria
     2. Tag/Mark data in the DB
     3. Move marked data
     """
     local_input_path = "./data_marker/file_path/"
 
     @staticmethod
-    def get_instance(data_processor_instance, gcs_instance, **kwargs):
-        return DataMarker(data_processor_instance, gcs_instance, **kwargs)
+    def get_instance(data_processor_instance, azure_instance, **kwargs):
+        return DataMarker(data_processor_instance, azure_instance, **kwargs)
 
-    def __init__(self, postgres_client, gcs_instance, **kwargs):
+    def __init__(self, postgres_client, azure_instance, **kwargs):
         self.postgres_client = postgres_client
-        self.gcs_instance = gcs_instance
+        self.azure_instance = azure_instance
         self.data_tagger_config = None
         self.data_filter = DataFilter()
         Logger.info("Total available cpu count: %s", str(multiprocessing.cpu_count()))
         self.data_mover = MediaFilesMover(
-            GCPFileSystem(self.gcs_instance),
+            AzureFileSystem(self.azure_instance),
             multiprocessing.cpu_count() / ESTIMATED_CPU_SHARE,
         )
         self.catalogue_dao = CatalogueDao(self.postgres_client)
@@ -110,13 +110,6 @@ class DataMarker(BaseProcessor):
             Logger.info("Updating audio_ids with data set type used for tags")
             self.catalogue_dao.update_audio_ids_with_data_type(source, language, dictinct_audio_ids, data_set)
             Logger.info("All audio_ids updated with data set type tags")
-            # Data archival
-            # paths = self.to_paths(dictinct_audio_ids, source_path_with_source)
-            # archive_path_with_source = (
-            #     f"{self.data_tagger_config.get(SOURCE_BASE_PATH)}/{source}/archive"
-            # )
-            # Logger.info("Archiving audio_ids to dir: %s", archive_path_with_source)
-            # self.data_mover.move_media_paths(paths, archive_path_with_source)
         else:
             Logger.info("No utterances found for filter criteria")
 
@@ -132,9 +125,6 @@ class DataMarker(BaseProcessor):
         Returns:
             the list of complete path for provided utterances
         """
-        list(
-            map(lambda u: f"{source_path_with_source}/{u[3]}/clean/{u[1]}", utterances)
-        )
         return list(
             map(lambda u: f"{source_path_with_source}/{u[3]}/clean/{u[1]}", utterances)
         )
@@ -163,7 +153,6 @@ class DataMarker(BaseProcessor):
             Returns source, data_set, filters, file_mode, file_path
 
         """
-
         filter_spec = kwargs.get(FILTER_SPEC, {})
         filters = filter_spec.get(FILTER_CRITERIA, {})
         source = kwargs.get("source")
@@ -174,11 +163,11 @@ class DataMarker(BaseProcessor):
 
         return source, language, data_set, filters, file_mode, file_path
 
-    def download_filtered_utterances_file(self, bucket, input_file_path, local_path):
+    def download_filtered_utterances_file(self, container_name, input_file_path, local_path):
         """Download the filtered utterance file from input_file_path to local_path
 
         Args:
-            bucket: bucket name
+            container_name: container name
             input_file_path: path of the filtered utterances csv file
             local_path: local directory path where file needs to be downloaded
 
@@ -186,13 +175,11 @@ class DataMarker(BaseProcessor):
             Download path where filtered utterance file is downloaded.
 
         """
-        input_file_path_abs = bucket + '/' + input_file_path
-        Logger.info(
-            f"Downloading file from path from {input_file_path_abs}"
-        )
+        input_file_path_abs = container_name + '/' + input_file_path
+        Logger.info(f"Downloading file from path from {input_file_path_abs}")
         download_path = f'{local_path}{os.path.basename(input_file_path_abs)}'
-        self.fs_interface.download_file_to_location(
-            input_file_path_abs, download_path
+        self.azure_instance.download_file_to_location(
+            container_name, input_file_path_abs, download_path
         )
 
         return download_path

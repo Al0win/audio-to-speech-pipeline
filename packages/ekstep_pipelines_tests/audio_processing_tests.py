@@ -5,17 +5,16 @@ from unittest.mock import Mock
 from ekstep_data_pipelines.audio_processing import constants
 from ekstep_data_pipelines.audio_processing.audio_processer import AudioProcessor
 
-
 class AudioProcessorTests(unittest.TestCase):
     def setUp(self):
         self.postgres_client = Mock()
-        self.gcp_instance = Mock()
+        self.azure_instance = Mock()
         self.catalogue_dao = Mock()
 
         self.audio_commons = {"snr_util": Mock(), "chunking_conversion": Mock()}
         self.audio_processer = AudioProcessor(
             self.postgres_client,
-            self.gcp_instance,
+            self.azure_instance,
             self.audio_commons,
             self.catalogue_dao,
         )
@@ -48,7 +47,7 @@ class AudioProcessorTests(unittest.TestCase):
             self.audio_commons["chunking_conversion"].convert_to_wav.call_count, 1
         )
 
-    def test__should__call_break_files_into_chunks_and_return_chanks_dir_path(self):
+    def test__should__call_break_files_into_chunks_and_return_chunks_dir_path(self):
         self.audio_processer.audio_processor_config = {
             constants.CHUNKING_CONFIG: {"aggressiveness": 2, "max_duration": 13}
         }
@@ -62,9 +61,7 @@ class AudioProcessorTests(unittest.TestCase):
         )
         self.assertEqual(actual_output, "test_local_download_path/chunks")
 
-    def test__should__call_break_files_into_chunks_and_throw_excepction_when_aggressiveness_is_not_a_int(
-        self,
-    ):
+    def test__should__call_break_files_into_chunks_and_throw_exception_when_aggressiveness_is_not_an_int(self):
         self.audio_processer.audio_processor_config = {
             constants.CHUNKING_CONFIG: {"aggressiveness": "2", "max_duration": 13}
         }
@@ -80,10 +77,7 @@ class AudioProcessorTests(unittest.TestCase):
             self.audio_commons["chunking_conversion"].create_audio_clips.call_count, 0
         )
 
-    def test__should_call_move_of_fs_interfase_when_move_file_to_done_folder_called(
-        self,
-    ):
-
+    def test__should_call_move_of_fs_interface_when_move_file_to_done_folder_called(self):
         self.audio_processer.audio_processor_config = {
             constants.SNR_DONE_FOLDER_PATH: "dummy_path"
         }
@@ -104,9 +98,7 @@ class AudioProcessorTests(unittest.TestCase):
     def test__process_audio_id_when_file_is_duplicate_should_not_call_SNR(
         self, generate_hash_mock
     ):
-
         self.catalogue_dao.check_file_exist_in_db.return_value = True
-
         generate_hash_mock.return_value = "12334"
 
         self.audio_processer.audio_processor_config = {
@@ -142,7 +134,6 @@ class AudioProcessorTests(unittest.TestCase):
     def test__process_audio_id_when_file_is_not_duplicate_should_call_SNR(
         self, generate_hash_mock
     ):
-
         self.catalogue_dao.check_file_exist_in_db.return_value = False
         generate_hash_mock.return_value = "12334"
         self.audio_commons["chunking_conversion"].convert_to_wav.return_value = (
@@ -178,3 +169,6 @@ class AudioProcessorTests(unittest.TestCase):
         self.catalogue_dao.check_file_exist_in_db.assert_called_with(
             "file_name.mp4", "12334"
         )
+
+if __name__ == '__main__':
+    unittest.main()

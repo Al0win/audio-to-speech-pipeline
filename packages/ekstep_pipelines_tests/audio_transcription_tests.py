@@ -7,25 +7,25 @@ from ekstep_data_pipelines.audio_transcription.audio_transcription import (
 )
 from ekstep_data_pipelines.audio_transcription.constants import AUDIO_LANGUAGE
 from ekstep_data_pipelines.common.audio_commons.transcription_clients.transcription_client_errors import (
-    GoogleTranscriptionClientError,AzureTranscriptionClientError,EkstepTranscriptionClientError
+    GoogleTranscriptionClientError, AzureTranscriptionClientError, EkstepTranscriptionClientError
 )
 
 
 class AudioTranscriptionTests(unittest.TestCase):
     def setUp(self):
         self.postgres_client = Mock()
-        self.gcp_instance = Mock()
+        self.azure_instance = Mock()
         self.audio_commons = {"transcription_clients": Mock()}
         self.catalogue_dao = Mock()
         self.audio_transcription = AudioTranscription(
             self.postgres_client,
-            self.gcp_instance,
+            self.azure_instance,
             self.audio_commons,
             self.catalogue_dao,
         )
         self.audio_transcription.fs_interface = Mock()
 
-    def test__delete_audio_id_should_call_gcp_delete_object_method(self):
+    def test__delete_audio_id_should_call_azure_delete_object_method(self):
         self.audio_transcription.delete_audio_id("remote_dir_path_for_given_audio_id")
 
         self.assertEqual(self.audio_transcription.fs_interface.delete.call_count, 1)
@@ -118,13 +118,11 @@ class AudioTranscriptionTests(unittest.TestCase):
     def test__generate_transcription_and_sanitize_called_with_filename_that_contained_wav_extension_when_generate_transcription_throw_error(
         self,
     ):
-        # file_path = Mock()
-
         file_path = "filename_with_extension.wav"
 
         transcription_client = self.audio_commons.get("transcription_clients")
         transcription_client.generate_transcription.side_effect = (
-            GoogleTranscriptionClientError("test_google_error")
+            AzureTranscriptionClientError("test_azure_error")
         )
 
         metadata = {"status": "test_status", "reason": "test_reason"}
@@ -180,7 +178,7 @@ class AudioTranscriptionTests(unittest.TestCase):
             "utterenaces",
             False,
             "remote_path",
-            'google'
+            'azure'
         )
 
         self.assertEqual(self.catalogue_dao.find_utterance_by_name.call_count, 3)
@@ -212,7 +210,7 @@ class AudioTranscriptionTests(unittest.TestCase):
             "utterenaces",
             True,
             "remote_path",
-            'google'
+            'azure'
         )
 
         self.assertEqual(self.catalogue_dao.find_utterance_by_name.call_count, 3)
@@ -251,7 +249,7 @@ class AudioTranscriptionTests(unittest.TestCase):
             "utterenaces",
             True,
             "remote_path",
-            'google'
+            'azure'
         )
 
         self.assertEqual(self.catalogue_dao.find_utterance_by_name.call_count, 4)

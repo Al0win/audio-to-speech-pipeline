@@ -9,13 +9,13 @@ from ekstep_data_pipelines.data_marker.data_marker import DataMarker
 class DataMarkerTests(unittest.TestCase):
     def setUp(self):
         self.postgres_client = Mock()
-        self.gcp_instance = Mock()
-        self.data_stager = DataMarker(self.postgres_client, self.gcp_instance)
+        self.azure_instance = Mock()  # Assuming you have an Azure mock instance or similar
+        self.data_stager = DataMarker(self.postgres_client, self.azure_instance)
         self.data_stager.fs_interface = Mock()
 
     def test__should_transform_utterances_to_file_paths(self):
         source_base_path = (
-            "gs://ekstepspeechrecognition-dev/data/audiotospeech/raw/catalogued/"
+            "https://ekstepspeechrecognition-dev.blob.core.windows.net/data/audiotospeech/raw/catalogued/"
             "hindi/audio/source_1"
         )
         utterances = [
@@ -25,16 +25,16 @@ class DataMarkerTests(unittest.TestCase):
         files = self.data_stager.to_files(utterances, source_base_path)
 
         expected_files = [
-            "gs://ekstepspeechrecognition-dev/data/audiotospeech/raw/catalogued/hindi/audio/"
+            "https://ekstepspeechrecognition-dev.blob.core.windows.net/data/audiotospeech/raw/catalogued/hindi/audio/"
             "source_1/2020123/clean/file_10.wav",
-            "gs://ekstepspeechrecognition-dev/data/audiotospeech/raw/catalogued/hindi/audio/"
+            "https://ekstepspeechrecognition-dev.blob.core.windows.net/data/audiotospeech/raw/catalogued/hindi/audio/"
             "source_1/2020124/clean/file_11.wav",
         ]
         self.assertListEqual(files, expected_files)
 
     def test__should_append_audio_ids_to_file_paths(self):
         source_base_path = (
-            "gs://ekstepspeechrecognition-dev/data/audiotospeech/raw/catalogued/"
+            "https://ekstepspeechrecognition-dev.blob.core.windows.net/data/audiotospeech/raw/catalogued/"
             "hindi/audio/source_1"
         )
         audio_ids = [
@@ -43,11 +43,11 @@ class DataMarkerTests(unittest.TestCase):
         paths = self.data_stager.to_paths(audio_ids, source_base_path)
 
         expected_files = [
-            "gs://ekstepspeechrecognition-dev/data/audiotospeech/raw/catalogued/hindi/audio/"
+            "https://ekstepspeechrecognition-dev.blob.core.windows.net/data/audiotospeech/raw/catalogued/hindi/audio/"
             "source_1/123",
-            "gs://ekstepspeechrecognition-dev/data/audiotospeech/raw/catalogued/hindi/audio/"
+            "https://ekstepspeechrecognition-dev.blob.core.windows.net/data/audiotospeech/raw/catalogued/hindi/audio/"
             "source_1/324",
-            "gs://ekstepspeechrecognition-dev/data/audiotospeech/raw/catalogued/hindi/audio/"
+            "https://ekstepspeechrecognition-dev.blob.core.windows.net/data/audiotospeech/raw/catalogued/hindi/audio/"
             "source_1/434",
         ]
         self.assertListEqual(paths, expected_files)
