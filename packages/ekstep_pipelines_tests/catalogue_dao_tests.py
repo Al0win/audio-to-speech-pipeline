@@ -4,21 +4,20 @@ from unittest import mock
 
 from ekstep_data_pipelines.common.dao.catalogue_dao import CatalogueDao
 
-
 class CatalogueTests(unittest.TestCase):
 
     def setUp(self):
         self.maxDiff = None
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_get_utterances(self, mock_postgres_client):
-        mock_postgres_client.execute_query.return_value = [
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_get_utterances(self, mock_azure_sql_client):
+        mock_azure_sql_client.execute_query.return_value = [
             (
                 '[{"name": "190_Bani_Rahengi_Kitaabe_dr__sunita_rani_ghosh.wav", '
                 '"duration": "13.38", "snr_value": 38.432806, "status": "Clean"}]',
             )
         ]
-        catalogueDao = CatalogueDao(mock_postgres_client)
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
         audio_id = "2020"
         actual_utterances = catalogueDao.get_utterances(audio_id)
         expected_utterances = [
@@ -31,19 +30,19 @@ class CatalogueTests(unittest.TestCase):
         ]
         self.assertEqual(expected_utterances, actual_utterances)
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_get_utterances_as_empty_if_no_records(self, mock_postgres_client):
-        mock_postgres_client.execute_query.return_value = []
-        catalogueDao = CatalogueDao(mock_postgres_client)
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_get_utterances_as_empty_if_no_records(self, mock_azure_sql_client):
+        mock_azure_sql_client.execute_query.return_value = []
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
         audio_id = "2020"
         actual_utterances = catalogueDao.get_utterances(audio_id)
         expected_utterances = []
         self.assertEqual(expected_utterances, actual_utterances)
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_update_utterances(self, mock_postgres_client):
-        mock_postgres_client.execute_update.return_value = None
-        catalogueDao = CatalogueDao(mock_postgres_client)
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_update_utterances(self, mock_azure_sql_client):
+        mock_azure_sql_client.execute_update.return_value = None
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
         audio_id = "2020"
         utterances = [
             {
@@ -55,22 +54,21 @@ class CatalogueTests(unittest.TestCase):
         ]
 
         rows_updated = catalogueDao.update_utterances(audio_id, utterances)
-        args = mock_postgres_client.execute_update.call_args_list
+        args = mock_azure_sql_client.execute_update.call_args_list
         called_with_params = {
             "utterances": json.dumps(utterances),
             "audio_id": audio_id,
         }
         called_with_sql = (
-            "update media_metadata_staging set utterances_files_list "
-            "= :utterances where audio_id = :audio_id"
+            "UPDATE media_metadata_staging SET utterances_files_list = @utterances WHERE audio_id = @audio_id"
         )
         self.assertEqual(rows_updated, True)
         self.assertEqual(called_with_sql, args[0][0][0])
         self.assertEqual(called_with_params, args[0][1])
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_utterance_by_name(self, mock_postgres_client):
-        catalogueDao = CatalogueDao(mock_postgres_client)
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_utterance_by_name(self, mock_azure_sql_client):
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
         name = "190_Bani_Rahengi_Kitaabe_dr__sunita_rani_ghosh.wav"
         utterances = [
             {
@@ -97,9 +95,9 @@ class CatalogueTests(unittest.TestCase):
             utterance,
         )
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_utterance_by_name_return_None_if_not_found(self, mock_postgres_client):
-        catalogueDao = CatalogueDao(mock_postgres_client)
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_utterance_by_name_return_None_if_not_found(self, mock_azure_sql_client):
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
         name = "not_exists.wav"
         utterances = [
             {
@@ -119,9 +117,9 @@ class CatalogueTests(unittest.TestCase):
         utterance = catalogueDao.find_utterance_by_name(utterances, name)
         self.assertEqual(None, utterance)
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_update_utterance_status(self, mock_postgres_client):
-        catalogueDao = CatalogueDao(mock_postgres_client)
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_update_utterance_status(self, mock_azure_sql_client):
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
         audio_id = "2020"
         utterance = {
             "name": "190_Bani_Rahengi_Kitaabe_dr__sunita_rani_ghosh.wav",
@@ -135,21 +133,22 @@ class CatalogueTests(unittest.TestCase):
 
         rows_updated = catalogueDao.update_utterance_status(audio_id, utterance)
 
-        args = mock_postgres_client.execute_update.call_args_list
+        args = mock_azure_sql_client.execute_update.call_args_list
         called_with_query = (
-            "update media_speaker_mapping set status = :status, fail_reason = :reason,is_transcribed = (SELECT case when is_transcribed = TRUE then true else :is_transcribed end as e from unnest(ARRAY[is_transcribed])),stt_api_used =(select array_agg(distinct e) from unnest(stt_api_used || ARRAY[:stt_api_used]) e) where audio_id = :audio_id and clipped_utterance_file_name = :name"
+            "UPDATE media_speaker_mapping SET status = @status, fail_reason = @reason, "
+            "is_transcribed = CASE WHEN is_transcribed = 1 THEN 1 ELSE @is_transcribed END, "
+            "stt_api_used = (SELECT DISTINCT e FROM STRING_SPLIT(stt_api_used + ',' + @stt_api_used, ',') e) "
+            "WHERE audio_id = @audio_id AND clipped_utterance_file_name = @name"
         )
 
-        called_with_args = {'status': 'Clean', 'is_transcribed': True, 'stt_api_used': 'google', 'reason': 'stt error',
+        called_with_args = {'status': 'Clean', 'is_transcribed': 1, 'stt_api_used': 'google', 'reason': 'stt error',
                             'audio_id': '2020', 'name': '190_Bani_Rahengi_Kitaabe_dr__sunita_rani_ghosh.wav'}
-        print("**********************", called_with_args)
-        print("*********************", args[0][1])
         self.assertEqual(True, rows_updated)
         self.assertEqual(called_with_query, args[0][0][0])
         self.assertEqual(called_with_args, args[0][1])
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_get_utterances_by_source(self, mock_postgres_client):
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_get_utterances_by_source(self, mock_azure_sql_client):
         source = "test_source"
         status = "Clean"
         language = "hindi"
@@ -162,252 +161,163 @@ class CatalogueTests(unittest.TestCase):
             (4, "file_4.wav", "13", "2010126", 19),
         ]
         called_with_sql = (
-            "select speaker_id, clipped_utterance_file_name, clipped_utterance_duration, "
+            "SELECT speaker_id, clipped_utterance_file_name, clipped_utterance_duration, "
             "audio_id, snr "
-            "from media_speaker_mapping "
-            "where audio_id in "
-            "(select audio_id from media_metadata_staging "
-            'where "source" = :source and "language" = :language and (data_set_used_for IS NULL or data_set_used_for = :data_set)) '
-            "and status = :status "
-            "and staged_for_transcription = false "
-            "and clipped_utterance_duration >= 0.5 and clipped_utterance_duration <= 15"
+            "FROM media_speaker_mapping "
+            "WHERE audio_id IN (SELECT audio_id FROM media_metadata_staging "
+            "WHERE [source] = @source AND [language] = @language AND (data_set_used_for IS NULL OR data_set_used_for = @data_set)) "
+            "AND status = @status "
+            "AND staged_for_transcription = 0 "
+            "AND clipped_utterance_duration BETWEEN 0.5 AND 15"
         )
-        mock_postgres_client.execute_query.return_value = expected_utterances
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        args = mock_postgres_client.execute_query.call_args_list
+        mock_azure_sql_client.execute_query.return_value = expected_utterances
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        args = mock_azure_sql_client.execute_query.call_args_list
         utterances = catalogueDao.get_utterances_by_source(source, status, language, data_set)
         self.assertEqual(utterances, expected_utterances)
         self.assertEqual(called_with_sql, args[0][0][0])
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test__should_update_utterance_staged_for_transcription(
-            self, mock_postgres_client
-    ):
-        mock_postgres_client.execute_batch.return_value = 2
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test__should_update_utterances_staged_for_transcription(self, mock_azure_sql_client):
+        mock_azure_sql_client.execute_update.return_value = None
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
         utterances = [
-            (1, "file_1.wav", "10", 2010123, 16),
-            (2, "file_2.wav", "11", 2010124, 16),
+            {
+                "name": "190_Bani_Rahengi_Kitaabe_dr__sunita_rani_ghosh.wav",
+                "duration": "13.38",
+                "snr_value": 38.432806,
+                "status": "Clean",
+            }
         ]
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        catalogueDao.update_utterances_staged_for_transcription(
-            utterances, "test_source", "hindi", "test"
-        )
+
+        catalogueDao.update_utterances_staged_for_transcription(utterances)
+
+        args = mock_azure_sql_client.execute_update.call_args_list
         called_with_query = (
-            "update media_speaker_mapping set staged_for_transcription = true,"
-            "data_type = :data_set "
-            "where audio_id in (select audio_id from media_metadata_staging "
-            "where \"source\" = :source and \"language\" = :language) and clipped_utterance_file_name in ('file_1.wav',"
-            "'file_2.wav')"
+            "UPDATE media_speaker_mapping SET staged_for_transcription = 1, status = @status "
+            "WHERE clipped_utterance_file_name = @name"
         )
 
-        called_with_args = {"source": "test_source", "language": "hindi", "data_set": "test"}
-        args = mock_postgres_client.execute_update.call_args
-        self.assertEqual(called_with_query, args[0][0])
-        self.assertEqual(called_with_args, args[1])
+        called_with_args = {'status': 'Clean', 'name': '190_Bani_Rahengi_Kitaabe_dr__sunita_rani_ghosh.wav'}
+        self.assertEqual(called_with_query, args[0][0][0])
+        self.assertEqual(called_with_args, args[0][1])
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test__should_update_utterance_staged_for_transcription_empty_list(
-            self, mock_postgres_client
-    ):
-        mock_postgres_client.execute_update.return_value = 2
-        utterances = []
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        catalogueDao.update_utterances_staged_for_transcription(
-            utterances, "test_source", "hindi", "test"
-        )
-        args = mock_postgres_client.execute_update.call_args
-        self.assertEqual(None, args)
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test__should_update_utterances_staged_for_transcription_empty_list(self, mock_azure_sql_client):
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        catalogueDao.update_utterances_staged_for_transcription([])
+        self.assertFalse(mock_azure_sql_client.execute_update.called)
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test__should_return_a_unique_id(self, mock_postgres_client):
-        mock_postgres_client.execute_query.return_value = [[231]]
-        args = mock_postgres_client.execute_query.call_args_list
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test__should_return_a_unique_id(self, mock_azure_sql_client):
+        mock_azure_sql_client.execute_query.return_value = [("unique_id",)]
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        unique_id = catalogueDao.get_unique_id()
+        self.assertEqual(unique_id, "unique_id")
 
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        actul_value = catalogueDao.get_unique_id()
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test__should_check_in_db_file_present_or_not(self, mock_azure_sql_client):
+        mock_azure_sql_client.execute_query.return_value = [(1,)]
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        file_exists = catalogueDao.check_file_exist_in_db("filename.wav")
+        self.assertTrue(file_exists)
 
-        self.assertEqual(actul_value, 231)
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test__should_update_utterance_speaker(self, mock_azure_sql_client):
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        utterance_id = 1
+        speaker_id = 2
+        catalogueDao.update_utterance_speaker(utterance_id, speaker_id)
+        args = mock_azure_sql_client.execute_update.call_args_list
+        called_with_query = "UPDATE media_speaker_mapping SET speaker_id = @speaker_id WHERE utterance_id = @utterance_id"
+        called_with_args = {'speaker_id': 2, 'utterance_id': 1}
+        self.assertEqual(called_with_query, args[0][0][0])
+        self.assertEqual(called_with_args, args[0][1])
 
-        self.assertEqual("SELECT nextval('audio_id_seq');", args[0][0][0])
-
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test__should_check_in_db_file_present_or_not(self, mock_postgres_client):
-        mock_postgres_client.execute_query.return_value = [[True]]
-        args = mock_postgres_client.execute_query.call_args_list
-        calling_args = {"file_name": "test_file", "hash_code": "dummy_hash_code"}
-
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        actul_value = catalogueDao.check_file_exist_in_db(
-            "test_file", "dummy_hash_code"
-        )
-
-        self.assertEqual(actul_value, True)
-
-        self.assertEqual(
-            "select exists(select 1 from media_metadata_staging where raw_file_name="
-            " :file_name or media_hash_code = :hash_code);",
-            args[0][0][0],
-        )
-
-        self.assertEqual(calling_args, args[0][1])
-
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test__should_update_utterance_speaker(self, mock_postgres_client):
-        mock_postgres_client.execute_update.return_value = 2
-        utterances = ["file_1.wav", "file_2.wav"]
-        speaker_name = "xyz"
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        catalogueDao.update_utterance_speaker(utterances, speaker_name, 0)
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test__should_insert_speakers(self, mock_azure_sql_client):
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        speakers = [
+            {"name": "speaker1", "language": "hindi"},
+            {"name": "speaker2", "language": "english"}
+        ]
+        catalogueDao.insert_speaker(speakers)
+        args = mock_azure_sql_client.execute_update.call_args_list
         called_with_query = (
-            "update media_speaker_mapping set "
-            "speaker_id=(select speaker_id from speaker where speaker_name=:speaker_name limit 1) "
-            ", was_noise=:was_noise "
-            "where clipped_utterance_file_name in ('file_1.wav','file_2.wav')"
+            "INSERT INTO speaker (name, language) VALUES "
+            "(@name1, @language1), "
+            "(@name2, @language2)"
         )
-        called_with_args = {"speaker_name": speaker_name, "was_noise": 0}
-        args = mock_postgres_client.execute_update.call_args
-        self.assertEqual(called_with_query, args[0][0])
-        self.assertEqual(called_with_args, args[1])
+        called_with_args = {'name1': 'speaker1', 'language1': 'hindi', 'name2': 'speaker2', 'language2': 'english'}
+        self.assertEqual(called_with_query, args[0][0][0])
+        self.assertEqual(called_with_args, args[0][1])
 
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test__should_insert_speakers(self, mock_postgres_client):
-        mock_postgres_client.execute_update.return_value = 2
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        catalogueDao.insert_speaker("test_source", "test_speaker")
-        called_with_query = (
-            "insert into speaker (source, speaker_name) values (:source, :speaker_name)"
-        )
-        called_with_args = {"source": "test_source", "speaker_name": "test_speaker"}
-        args = mock_postgres_client.execute_update.call_args
-        self.assertEqual(called_with_query, args[0][0])
-        self.assertEqual(called_with_args, args[1])
-
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_get_utterance_details_by_source(self, mock_postgres_client):
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_get_utterance_details_by_source(self, mock_azure_sql_client):
         source = "test_source"
-        language = "Hindi"
-        # speaker_id, clipped_utterance_file_name, clipped_utterance_duration, audio_id, snr
+        is_transcribed = True
         expected_utterances = [
             (
-                "sample1.wav",
-                13.38,
-                38.432806,
-                "dummy_speaker_name",
-                "dummy_main_source",
-                "dummy_collection_source",
-                "m",
-                'Clean'
-
-            ),
-            (
-                "sample2.wav",
-                15.38,
-                40.432806,
-                "dummy_speaker_name_2",
-                "dummy_main_source_2",
-                "dummy_collection_source_2",
-                "f",
-                'Rejected'
+                1, "file_1.wav", "10", "2010123", "speaker_1", "Clean"
             )
         ]
-        called_with_sql = (
-            """
-            select msp.clipped_utterance_file_name as audio_file_name, 
-            msp.clipped_utterance_duration as duration, msp.snr , s.speaker_name, 
-            mms.source_url as collection_source , mms.source_website as main_source, msp.speaker_gender as gender,
-            msp.audio_id, msp.status
-            from media_speaker_mapping msp 
-                inner join media_metadata_staging mms 
-                    on msp.audio_id = mms.audio_id
-            left outer join speaker s 
-                    on s.speaker_id = msp.speaker_id 
-            where mms.source = :source and mms.language=:language and msp.status in ('Clean','Rejected') and msp.staged_for_transcription = true
-            and msp.is_transcribed = :is_transcribed and msp.labelled_artifact_name is null
-            limit :count
-            """
+        mock_azure_sql_client.execute_query.return_value = expected_utterances
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        args = mock_azure_sql_client.execute_query.call_args_list
+        called_with_query = (
+            "SELECT speaker_id, clipped_utterance_file_name, clipped_utterance_duration, "
+            "audio_id, snr, speaker_id, status "
+            "FROM media_speaker_mapping "
+            "WHERE audio_id IN (SELECT audio_id FROM media_metadata_staging "
+            "WHERE [source] = @source) "
+            "AND status = 'Clean' "
+            "AND is_transcribed = @is_transcribed "
+            "AND clipped_utterance_duration BETWEEN 0.5 AND 15"
         )
-        call_with_params = {"source": source, "status": "('Clean','Rejected')",
-                            "language": language, "count": 2, "is_transcribed": True}
-
-        mock_postgres_client.execute_query.return_value = expected_utterances
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        args = mock_postgres_client.execute_query.call_args_list
-        utterances = catalogueDao.get_utterance_details_by_source(source, language, 2, True, True, True)
+        utterances = catalogueDao.get_utterance_details_by_source(source, is_transcribed)
         self.assertEqual(utterances, expected_utterances)
-        self.assertEqual(called_with_sql, args[0][0][0])
-        self.assertEqual(call_with_params, args[0][1])
+        self.assertEqual(called_with_query, args[0][0][0])
 
-    # @unittest.skip
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test_get_utterance_details_by_source_with_is_transcriped_false(self, mock_postgres_client):
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test_get_utterance_details_by_source_with_is_transcribed_false(self, mock_azure_sql_client):
         source = "test_source"
-        language = "Hindi"
-        # speaker_id, clipped_utterance_file_name, clipped_utterance_duration, audio_id, snr
+        is_transcribed = False
         expected_utterances = [
             (
-                "sample1.wav",
-                13.38,
-                38.432806,
-                "dummy_speaker_name",
-                "dummy_main_source",
-                "dummy_collection_source",
-                "m",
-                'Clean'
-
-            ),
-            (
-                "sample2.wav",
-                15.38,
-                40.432806,
-                "dummy_speaker_name_2",
-                "dummy_main_source_2",
-                "dummy_collection_source_2",
-                "f",
-                'Rejected'
+                1, "file_1.wav", "10", "2010123", "speaker_1", "Clean"
             )
         ]
-        called_with_sql = (
-            """
-            select msp.clipped_utterance_file_name as audio_file_name, 
-            msp.clipped_utterance_duration as duration, msp.snr , s.speaker_name, 
-            mms.source_url as collection_source , mms.source_website as main_source, msp.speaker_gender as gender,
-            msp.audio_id, msp.status
-            from media_speaker_mapping msp 
-                inner join media_metadata_staging mms 
-                    on msp.audio_id = mms.audio_id
-            left outer join speaker s 
-                    on s.speaker_id = msp.speaker_id 
-            where mms.source = :source and mms.language=:language and msp.status in ('Clean','Rejected') and msp.staged_for_transcription = true
-            and (msp.is_transcribed = :is_transcribed or msp.is_transcribed is null) and msp.unlabelled_artifact_name is null
-            limit :count
-            """
-        )
-        call_with_params = {"source": source, "status": "('Clean','Rejected')",
-                            "language": language, "count": 2, "is_transcribed": False}
-        mock_postgres_client.execute_query.return_value = expected_utterances
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        args = mock_postgres_client.execute_query.call_args_list
-        utterances = catalogueDao.get_utterance_details_by_source(source, language, 2, False, False, True)
-        self.assertEqual(utterances, expected_utterances)
-        self.assertEqual(called_with_sql, args[0][0][0])
-        self.assertEqual(call_with_params, args[0][1])
-
-    @mock.patch("ekstep_data_pipelines.common.postgres_db_client.PostgresClient")
-    def test__should_update_utterance_artifact_name(self, mock_postgres_client):
-        mock_postgres_client.execute_update.return_value = 2
-        utterances = ["file_1.wav", "file_2.wav"]
-        artifact_name = "xyz"
-        audio_id = "123"
-        is_labelled = "True"
-        catalogueDao = CatalogueDao(mock_postgres_client)
-        catalogueDao.update_utterance_artifact(utterances, artifact_name, is_labelled, audio_id)
+        mock_azure_sql_client.execute_query.return_value = expected_utterances
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        args = mock_azure_sql_client.execute_query.call_args_list
         called_with_query = (
-            """update media_speaker_mapping
-            set labelled_artifact_name=:artifact_name
-            where audio_id=:audio_id and clipped_utterance_file_name in ('file_1.wav','file_2.wav')"""
+            "SELECT speaker_id, clipped_utterance_file_name, clipped_utterance_duration, "
+            "audio_id, snr, speaker_id, status "
+            "FROM media_speaker_mapping "
+            "WHERE audio_id IN (SELECT audio_id FROM media_metadata_staging "
+            "WHERE [source] = @source) "
+            "AND status = 'Clean' "
+            "AND is_transcribed = 0 "
+            "AND clipped_utterance_duration BETWEEN 0.5 AND 15"
         )
-        called_with_args = {"artifact_name": artifact_name, "audio_id": audio_id}
-        args = mock_postgres_client.execute_update.call_args
-        print(args[0][0])
-        self.assertEqual(called_with_query, args[0][0])
-        self.assertEqual(called_with_args, args[1])
+        utterances = catalogueDao.get_utterance_details_by_source(source, is_transcribed)
+        self.assertEqual(utterances, expected_utterances)
+        self.assertEqual(called_with_query, args[0][0][0])
+
+    @mock.patch("ekstep_data_pipelines.common.azure_sql_db_client.AzureSQLClient")
+    def test__should_update_utterance_artifact_name(self, mock_azure_sql_client):
+        catalogueDao = CatalogueDao(mock_azure_sql_client)
+        utterance_name = "file_1.wav"
+        artifact_name = "artifact_1"
+        catalogueDao.update_utterance_artifact(utterance_name, artifact_name)
+        args = mock_azure_sql_client.execute_update.call_args_list
+        called_with_query = (
+            "UPDATE media_speaker_mapping SET artifact_name = @artifact_name "
+            "WHERE clipped_utterance_file_name = @utterance_name"
+        )
+        called_with_args = {'artifact_name': 'artifact_1', 'utterance_name': 'file_1.wav'}
+        self.assertEqual(called_with_query, args[0][0][0])
+        self.assertEqual(called_with_args, args[0][1])
+
+if __name__ == "__main__":
+    unittest.main()
